@@ -11,6 +11,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 
+
 export class InfraStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -23,17 +24,31 @@ export class InfraStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY, // change for production
     });
 
-    // S3 bucket for Frontend hosting
     const frontendBucket = new s3.Bucket(this, 'FrontendBucket', {
-      websiteIndexDocument: 'index.html',
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
     });
 
-    // CloudFront distribution for frontend
     const distribution = new cloudfront.Distribution(this, 'FrontendDistribution', {
       defaultBehavior: {
         origin: new origins.S3Origin(frontendBucket),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       },
+      defaultRootObject: 'index.html',  // <-- CloudFront handles this, not S3
+      errorResponses: [
+        {
+          httpStatus: 403,
+          responseHttpStatus: 200,
+          responsePagePath: '/index.html',
+          ttl: cdk.Duration.minutes(5),
+        },
+        {
+          httpStatus: 404,
+          responseHttpStatus: 200,
+          responsePagePath: '/index.html',
+          ttl: cdk.Duration.minutes(5),
+        },
+      ],
     });
 
     // Basic Lambda
@@ -48,9 +63,15 @@ export class InfraStack extends cdk.Stack {
 
     table.grantReadWriteData(apiLambda);
 
-    // HTTP API
+    // HTTP API with CORS
     const httpApi = new apigwv2.HttpApi(this, 'HttpApi', {
       apiName: 'ClubSaasApi',
+      corsPreflight: {
+        allowOrigins: ['*'], // In production, replace with your CloudFront domain
+        allowMethods: [apigwv2.CorsHttpMethod.ANY],
+        allowHeaders: ['Content-Type', 'Authorization'],
+        maxAge: cdk.Duration.days(1),
+      },
     });
 
     // Lambda integration
